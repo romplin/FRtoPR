@@ -259,7 +259,7 @@ jobs:
           
           # Start new containers
           echo "▶️ Starting new containers..."
-          sudo docker-compose up -d
+          docker-compose up -d
           
           # Wait for health check
           echo "🏥 Waiting for application to be healthy..."
@@ -278,22 +278,22 @@ jobs:
           
           if [ $attempt -eq $max_attempts ]; then
             echo "❌ Health check failed, rolling back..."
-            sudo docker-compose down
+            docker-compose down
             if [ -f $BACKUP_DIR/docker-compose-*.yml ]; then
               latest_backup=$(ls -t $BACKUP_DIR/docker-compose-*.yml | head -n1)
-              sudo cp "$latest_backup" docker-compose.yml
-              sudo docker-compose up -d
+              cp "$latest_backup" docker-compose.yml
+               docker-compose up -d
             fi
             exit 1
           fi
           
           # Cleanup old images
           echo "🧹 Cleaning up old images..."
-          sudo docker image prune -f
+           docker image prune -f
           
           # Show deployment status
           echo "📊 Deployment Status:"
-          sudo docker-compose ps
+           docker-compose ps
           
           echo "🎉 Deployment completed successfully!"
           echo "🌐 Application URL: http://${{ secrets.HETZNER_HOST }}:8080"
