@@ -833,3 +833,4 @@ func submitToGitHubMCP(fr FeatureRequest) error {
 
 	return nil
 }
+
