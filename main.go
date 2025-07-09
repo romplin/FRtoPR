@@ -11,17 +11,17 @@ import (
 )
 
 type FeatureRequest struct {
-	ID                  int       `json:"id"`
-	Title               string    `json:"title"`
-	Description         string    `json:"description"`
-	AcceptanceCriteria  string    `json:"acceptance_criteria"`
-	Priority            string    `json:"priority"`
-	TargetTimeline      string    `json:"target_timeline"`
-	AffectedComponents  []string  `json:"affected_components"`
-	ExampleUsage        string    `json:"example_usage"`
-	TechnicalConstraints string   `json:"technical_constraints"`
-	CreatedAt           time.Time `json:"created_at"`
-	Status              string    `json:"status"`
+	ID                   int       `json:"id"`
+	Title                string    `json:"title"`
+	Description          string    `json:"description"`
+	AcceptanceCriteria   string    `json:"acceptance_criteria"`
+	Priority             string    `json:"priority"`
+	TargetTimeline       string    `json:"target_timeline"`
+	AffectedComponents   []string  `json:"affected_components"`
+	ExampleUsage         string    `json:"example_usage"`
+	TechnicalConstraints string    `json:"technical_constraints"`
+	CreatedAt            time.Time `json:"created_at"`
+	Status               string    `json:"status"`
 }
 
 type APIResponse struct {
@@ -442,20 +442,20 @@ func handleSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	featureRequest := FeatureRequest{
-		ID:                  nextID,
-		Title:               getStringValue(form, "title"),
-		Description:         getStringValue(form, "description"),
-		AcceptanceCriteria:  getStringValue(form, "acceptance_criteria"),
-		Priority:            getStringValue(form, "priority"),
-		TargetTimeline:      getStringValue(form, "target_timeline"),
-		AffectedComponents:  components,
-		ExampleUsage:        getStringValue(form, "example_usage"),
+		ID:                   nextID,
+		Title:                getStringValue(form, "title"),
+		Description:          getStringValue(form, "description"),
+		AcceptanceCriteria:   getStringValue(form, "acceptance_criteria"),
+		Priority:             getStringValue(form, "priority"),
+		TargetTimeline:       getStringValue(form, "target_timeline"),
+		AffectedComponents:   components,
+		ExampleUsage:         getStringValue(form, "example_usage"),
 		TechnicalConstraints: getStringValue(form, "technical_constraints"),
-		CreatedAt:           time.Now(),
-		Status:              "submitted",
+		CreatedAt:            time.Now(),
+		Status:               "submitted",
 	}
 
-	if featureRequest.Title == "" || featureRequest.Description == "" || 
+	if featureRequest.Title == "" || featureRequest.Description == "" ||
 		featureRequest.AcceptanceCriteria == "" || featureRequest.Priority == "" {
 		writeJSONError(w, "Please fill in all required fields", http.StatusBadRequest)
 		return
