@@ -561,7 +561,7 @@ const htmlTemplate = `
                         
                         if (response.data.success) {
                             this.message = {
-                                text: \`Feature request submitted successfully! ID: \${response.data.data.id}\`,
+                                text: `Feature request submitted successfully! ID: ' + response.data.data.id,
                                 type: 'success'
                             };
                             this.resetForm();
