@@ -1,3 +1,287 @@
+# Feature Request App - Repository Structure & Build Guide
+
+## Repository Structure
+
+Your repository should look like this:
+
+```
+feature-request-app/
+├── main.go                 # Main application file (Go backend + Vue frontend)
+├── go.mod                  # Go module file
+├── go.sum                  # Go dependencies (auto-generated)
+├── Dockerfile              # Docker build configuration
+├── docker-compose.yml      # Docker Compose configuration
+├── .env.example           # Environment variables template
+├── .env                   # Your actual environment variables (git-ignored)
+├── .gitignore             # Git ignore file
+├── Makefile               # Build automation
+├── README.md              # Project documentation
+├── .github/
+│   └── workflows/
+│       └── deploy.yml     # Complete CI/CD pipeline
+└── configs/               # Optional: configuration files
+    ├── nginx.conf         # Nginx reverse proxy config
+    └── feature-request-app.service  # Systemd service file
+```
+
+## Step-by-Step Build Instructions
+
+### 1. Initialize Your Repository
+
+```bash
+# Create project directory
+mkdir feature-request-app
+cd feature-request-app
+
+# Initialize Git repository
+git init
+
+# Initialize Go module
+go mod init feature-request-app
+```
+
+### 2. Create Core Files
+
+Create these files in order:
+
+#### `main.go`
+Copy the complete Go application code from the artifact above.
+
+#### `go.mod`
+```go
+module feature-request-app
+
+go 1.21
+
+require (
+    // No external dependencies - using only Go standard library
+)
+```
+
+#### `.gitignore`
+```
+# Binaries
+feature-request-app
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Go workspace file
+go.work
+
+# Environment variables
+.env
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Docker
+.dockerignore
+
+# Logs
+*.log
+```
+
+#### `.env.example`
+```bash
+# GitHub MCP Server Configuration
+GITHUB_MCP_SERVER_URL=https://your-github-mcp-server.com
+GITHUB_MCP_TOKEN=your-github-mcp-token
+
+# Server Configuration
+PORT=8080
+```
+
+#### `Dockerfile`
+```dockerfile
+# Multi-stage build for smaller final image
+FROM golang:1.21-alpine AS builder
+
+# Set working directory
+WORKDIR /app
+
+# Copy go mod files
+COPY go.mod go.sum ./
+
+# Download dependencies
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Build the application
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main .
+
+# Final stage - minimal image
+FROM alpine:latest
+
+# Install ca-certificates for HTTPS requests
+RUN apk --no-cache add ca-certificates
+
+# Create non-root user
+RUN addgroup -g 1001 -S app && \
+    adduser -S -D -H -u 1001 -h /app -s /sbin/nologin -G app -g app app
+
+WORKDIR /app
+
+# Copy binary from builder stage
+COPY --from=builder /app/main .
+
+# Change ownership to app user
+RUN chown app:app main
+
+# Switch to non-root user
+USER app
+
+# Expose port
+EXPOSE 8080
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1
+
+# Run the application
+CMD ["./main"]
+```
+
+#### `docker-compose.yml`
+```yaml
+version: '3.8'
+
+services:
+  app:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      - GITHUB_MCP_SERVER_URL=${GITHUB_MCP_SERVER_URL}
+      - GITHUB_MCP_TOKEN=${GITHUB_MCP_TOKEN}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+```
+
+#### `Makefile`
+```makefile
+.PHONY: build run clean docker-build docker-run deploy test fmt lint help
+
+# Variables
+BINARY_NAME=feature-request-app
+DOCKER_IMAGE=feature-request-app
+PORT=8080
+
+# Default target
+help: ## Show this help message
+	@echo 'Usage: make [target]'
+	@echo ''
+	@echo 'Targets:'
+	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-15s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+
+# Development
+build: ## Build the Go application
+	@echo "Building $(BINARY_NAME)..."
+	go mod tidy
+	go build -o $(BINARY_NAME) .
+
+run: ## Run the application locally
+	@echo "Running $(BINARY_NAME) on port $(PORT)..."
+	go run main.go
+
+dev: ## Run in development mode with auto-reload (requires air)
+	@if command -v air > /dev/null; then \
+		air; \
+	else \
+		echo "Install air for auto-reload: go install github.com/cosmtrek/air@latest"; \
+		make run; \
+	fi
+
+# Testing
+test: ## Run tests
+	go test -v ./...
+
+test-coverage: ## Run tests with coverage
+	go test -v -coverprofile=coverage.out ./...
+	go tool cover -html=coverage.out -o coverage.html
+
+# Code quality
+fmt: ## Format Go code
+	go fmt ./...
+
+lint: ## Run linter (requires golangci-lint)
+	@if command -v golangci-lint > /dev/null; then \
+		golangci-lint run; \
+	else \
+		echo "Install golangci-lint: https://golangci-lint.run/usage/install/"; \
+	fi
+
+# Docker
+docker-build: ## Build Docker image
+	@echo "Building Docker image $(DOCKER_IMAGE)..."
+	docker build -t $(DOCKER_IMAGE):latest .
+
+docker-run: ## Run Docker container
+	@echo "Running Docker container..."
+	docker run -p $(PORT):$(PORT) --env-file .env $(DOCKER_IMAGE):latest
+
+docker-compose-up: ## Start with docker-compose
+	docker-compose up -d
+
+docker-compose-down: ## Stop docker-compose
+	docker-compose down
+
+docker-logs: ## View docker-compose logs
+	docker-compose logs -f
+
+# Deployment
+deploy: ## Manual deployment (for local testing)
+	@echo "Use 'git push' to trigger GitHub Actions deployment"
+	@echo "Or run: gh workflow run deploy-hetzner.yml"
+
+# Cleanup
+clean: ## Clean build artifacts
+	@echo "Cleaning up..."
+	rm -f $(BINARY_NAME)
+	rm -f coverage.out coverage.html
+	docker image prune -f
+
+# Setup
+setup: ## Set up development environment
+	@echo "Setting up development environment..."
+	cp .env.example .env
+	@echo "Please edit .env with your configuration"
+	go mod tidy
+
+# Production helpers
+build-prod: ## Build for production
+	CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -ldflags '-w -s' -o $(BINARY_NAME) .
+
+install-tools: ## Install development tools
+	go install github.com/cosmtrek/air@latest
+	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+```
+
+#### `.github/workflows/deploy.yml`
+```yaml
 name: Complete CI/CD Pipeline
 
 on:
@@ -78,7 +362,7 @@ jobs:
         CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -ldflags '-w -s' -o feature-request-app .
 
     - name: Upload build artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: feature-request-app-${{ github.sha }}
         path: feature-request-app
@@ -114,7 +398,7 @@ jobs:
         output: 'trivy-fs-results.sarif'
 
     - name: Upload Trivy scan results
-      uses: github/codeql-action/upload-sarif@v2
+      uses: github/codeql-action/upload-sarif@v3
       if: always()
       with:
         sarif_file: 'trivy-fs-results.sarif'
@@ -178,7 +462,7 @@ jobs:
         output: 'trivy-image-results.sarif'
 
     - name: Upload Trivy image scan results
-      uses: github/codeql-action/upload-sarif@v2
+      uses: github/codeql-action/upload-sarif@v3
       if: always()
       with:
         sarif_file: 'trivy-image-results.sarif'
@@ -346,3 +630,202 @@ jobs:
       run: |
         echo "❌ Tests failed - deployment skipped"
         exit 1
+```
+
+#### `README.md`
+```markdown
+# Feature Request System
+
+A modern Go + Vue.js application for capturing and managing structured feature requests with GitHub MCP integration.
+
+## 🚀 Quick Start
+
+1. **Clone and setup**:
+   ```bash
+   git clone <your-repo-url>
+   cd feature-request-app
+   make setup
+   ```
+
+2. **Configure environment**:
+   ```bash
+   # Edit .env with your settings
+   nano .env
+   ```
+
+3. **Run locally**:
+   ```bash
+   make run
+   # or with Docker
+   make docker-compose-up
+   ```
+
+4. **Visit**: http://localhost:8080
+
+## 🛠️ Development
+
+### Prerequisites
+- Go 1.21+
+- Docker & Docker Compose
+- Make
+
+### Available Commands
+```bash
+make help          # Show all available commands
+make run           # Run locally
+make build         # Build binary
+make test          # Run tests
+make docker-build  # Build Docker image
+make deploy        # Deploy to production
+```
+
+### Project Structure
+- `main.go` - Single-file application (Go backend + Vue frontend)
+- `Dockerfile` - Multi-stage Docker build
+- `docker-compose.yml` - Container orchestration
+- `Makefile` - Build automation
+- `deploy.sh` - Deployment script
+
+## 🔧 Configuration
+
+Environment variables in `.env`:
+```bash
+GITHUB_MCP_SERVER_URL=https://your-github-mcp-server.com
+GITHUB_MCP_TOKEN=your-token
+PORT=8080
+```
+
+## 🚢 Deployment with GitHub Actions
+
+### Setup GitHub Secrets
+
+In your GitHub repository settings, add these secrets:
+
+**Required for Hetzner deployment:**
+- `HETZNER_HOST` - Your Hetzner server IP/domain
+- `HETZNER_USERNAME` - SSH username (usually `root`)
+- `HETZNER_SSH_KEY` - Your private SSH key
+- `HETZNER_PORT` - SSH port (usually `22`)
+
+**Required for GitHub MCP:**
+- `GITHUB_MCP_SERVER_URL` - Your GitHub MCP server URL
+- `GITHUB_MCP_TOKEN` - Your GitHub MCP token
+
+### Automated Deployment
+
+#### Automatic (on push to main):
+```bash
+git add .
+git commit -m "Deploy new version"
+git push origin main
+# GitHub Actions will automatically deploy to Hetzner
+```
+
+#### Manual deployment:
+```bash
+# Using GitHub CLI
+gh workflow run deploy-hetzner.yml
+
+# Or trigger from GitHub web interface
+# Go to Actions → Deploy to Hetzner → Run workflow
+```
+
+### Workflow Features
+
+✅ **Complete Pipeline** (single `deploy.yml`):
+- **Testing** - Go tests, code quality, and formatting
+- **Security** - Filesystem and Docker image scanning
+- **Building** - Docker images with multi-arch support
+- **Deployment** - Automated Hetzner deployment with rollback
+- **Monitoring** - Health checks and notifications
+
+### Trigger Options
+
+**Automatic triggers:**
+- 📤 **Push to main** - Full CI/CD pipeline
+- 🔄 **Pull requests** - Testing only (no deployment)
+- 📅 **Weekly** - Security scans
+
+**Manual triggers:**
+- 🎯 **Manual deployment** with environment selection
+- 🚨 **Emergency deploy** with skip tests option
+
+## 📊 Features
+
+- ✅ Clean Vue.js frontend with reactive UI
+- ✅ Go backend with RESTful API
+- ✅ Structured feature request forms
+- ✅ GitHub MCP integration
+- ✅ Docker support
+- ✅ Health checks
+- ✅ Production-ready deployment
+
+## 🔍 API Endpoints
+
+- `GET /` - Frontend application
+- `POST /api/submit` - Submit feature request
+- `GET /api/requests` - List all requests
+- `GET /health` - Health check
+
+## 📝 License
+
+MIT License
+```
+
+## 3. Build and Run Instructions
+
+### Local Development:
+```bash
+# 1. Set up the project
+make setup
+
+# 2. Edit your .env file
+nano .env
+
+# 3. Run locally
+make run
+# or
+go run main.go
+```
+
+### Docker Development:
+```bash
+# Build and run with Docker
+make docker-build
+make docker-run
+
+# Or use docker-compose
+make docker-compose-up
+```
+
+### Production Deployment:
+```bash
+# On your Hetzner server
+git clone <your-repo>
+cd feature-request-app
+cp .env.example .env
+# Edit .env with your actual values
+make deploy
+```
+
+## 4. Quick Commands Reference
+
+```bash
+# Development
+make run              # Run locally
+make build            # Build binary
+make test             # Run tests
+make fmt              # Format code
+
+# Docker
+make docker-build     # Build image
+make docker-compose-up # Start with compose
+make docker-logs      # View logs
+
+# GitHub Actions
+git push              # Trigger full CI/CD
+gh workflow run deploy.yml --field environment=staging  # Deploy to staging
+gh workflow run deploy.yml --field skip_tests=true      # Emergency deploy
+```
+
+This structure gives you a complete, production-ready repository with proper build automation, deployment scripts, and documentation. The single `main.go` file contains everything you need, making it easy to maintain while still being feature-complete!
