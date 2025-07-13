@@ -22,11 +22,6 @@ on:
         required: false
         default: false
         type: boolean
-      deploy_mcp_server:
-        description: 'Deploy GitHub MCP Server'
-        required: false
-        default: true
-        type: boolean
 
 env:
   GO_VERSION: 1.23
@@ -237,15 +232,10 @@ jobs:
           echo "🛑 Stopping existing containers..."
           sudo docker-compose down --timeout 30 2>/dev/null || true
           
-          # Create new docker-compose.yml with MCP server integration
+          # Create new docker-compose.yml
           echo "📝 Creating docker-compose configuration..."
           sudo tee docker-compose.yml > /dev/null <<EOF
           version: '3.8'
-          
-          networks:
-            app-network:
-              driver: bridge
-          
           services:
             app:
               image: $IMAGE_NAME
@@ -253,7 +243,7 @@ jobs:
                 - "8080:8080"
               environment:
                 - PORT=8080
-                - GITHUB_MCP_SERVER_URL=http://github-mcp-server:3000
+                - GITHUB_MCP_SERVER_URL=${{ secrets.GITHUB_MCP_SERVER_URL }}
                 - GITHUB_MCP_TOKEN=${{ secrets.GITHUB_MCP_TOKEN }}
               restart: unless-stopped
               healthcheck:
@@ -265,33 +255,6 @@ jobs:
               labels:
                 - "deployment.version=${{ github.sha }}"
                 - "deployment.timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-              networks:
-                - app-network
-              depends_on:
-                github-mcp-server:
-                  condition: service_healthy
-          
-            github-mcp-server:
-              image: ghcr.io/github/github-mcp-server:latest
-              environment:
-                - GITHUB_PERSONAL_ACCESS_TOKEN=${{ secrets.GITHUB_PERSONAL_ACCESS_TOKEN }}
-                - GITHUB_TOOLSETS=repos,issues,pull_requests,code_security
-                - PORT=3000
-              restart: unless-stopped
-              healthcheck:
-                test: ["CMD", "sh", "-c", "ps aux | grep github-mcp-server | grep -v grep"]
-                interval: 30s
-                timeout: 10s
-                retries: 3
-                start_period: 20s
-              labels:
-                - "service.name=github-mcp-server"
-                - "deployment.version=${{ github.sha }}"
-              networks:
-                - app-network
-              # Only expose internally to the app network
-              # ports:
-              #   - "3000:3000"  # Uncomment if you need external access
           EOF
           
           # Start new containers
@@ -349,71 +312,10 @@ jobs:
         fi
 
   # ================================================================
-  # MCP SERVER HEALTH CHECK & MANAGEMENT
-  # ================================================================
-  mcp-server-check:
-    needs: [deploy]
-    if: ${{ (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') && (github.event.inputs.deploy_mcp_server != 'false') }}
-    runs-on: ubuntu-latest
-    environment: ${{ github.event.inputs.environment || 'production' }}
-    
-    steps:
-    - name: Verify MCP Server Deployment
-      uses: appleboy/ssh-action@v1.0.0
-      with:
-        host: ${{ secrets.HETZNER_HOST }}
-        username: ${{ secrets.HETZNER_USERNAME }}
-        key: ${{ secrets.HETZNER_SSH_KEY }}
-        port: ${{ secrets.HETZNER_PORT || 22 }}
-        script: |
-          cd /opt/feature-request-app
-          
-          echo "🔍 Checking GitHub MCP Server status..."
-          
-          # Check if container is running
-          if docker-compose ps github-mcp-server | grep -q "Up"; then
-            echo "✅ GitHub MCP Server container is running"
-          else
-            echo "❌ GitHub MCP Server container is not running"
-            echo "📋 Container status:"
-            docker-compose ps github-mcp-server
-            echo "📋 Container logs:"
-            docker-compose logs --tail 20 github-mcp-server
-            exit 1
-          fi
-          
-          # Check container health
-          health_status=$(docker-compose ps --format json github-mcp-server | jq -r '.[0].Health // "unknown"')
-          echo "🏥 Health status: $health_status"
-          
-          if [[ "$health_status" == "healthy" ]]; then
-            echo "✅ GitHub MCP Server is healthy"
-          elif [[ "$health_status" == "starting" ]]; then
-            echo "⏳ GitHub MCP Server is still starting up..."
-            # Wait a bit more and check again
-            sleep 30
-            health_status=$(docker-compose ps --format json github-mcp-server | jq -r '.[0].Health // "unknown"')
-            if [[ "$health_status" == "healthy" ]]; then
-              echo "✅ GitHub MCP Server is now healthy"
-            else
-              echo "⚠️ GitHub MCP Server health check inconclusive, but container is running"
-            fi
-          else
-            echo "⚠️ GitHub MCP Server health status unknown, checking logs..."
-            docker-compose logs --tail 10 github-mcp-server
-          fi
-          
-          # Show resource usage
-          echo "📊 Resource Usage:"
-          docker stats --no-stream --format "table {{.Container}}\t{{.CPUPerc}}\t{{.MemUsage}}" $(docker-compose ps -q)
-          
-          echo "🎉 MCP Server verification completed!"
-
-  # ================================================================
   # NOTIFICATION & CLEANUP
   # ================================================================
   notify:
-    needs: [test, security, docker, deploy, mcp-server-check]
+    needs: [test, security, docker, deploy]
     if: always()
     runs-on: ubuntu-latest
     
@@ -426,8 +328,7 @@ jobs:
         echo "  - Environment: ${{ github.event.inputs.environment || 'production' }}"
         echo "  - Commit: ${{ github.sha }}"
         echo "  - Image: ${{ needs.docker.outputs.image_tag }}"
-        echo "  - Main App URL: http://${{ secrets.HETZNER_HOST }}:8080"
-        echo "  - MCP Server Status: ${{ needs.mcp-server-check.result }}"
+        echo "  - URL: http://${{ secrets.HETZNER_HOST }}:8080"
 
     - name: Deployment Failure Notification
       if: ${{ needs.deploy.result == 'failure' }}
@@ -438,7 +339,6 @@ jobs:
         echo "  - Security: ${{ needs.security.result }}"
         echo "  - Docker: ${{ needs.docker.result }}"
         echo "  - Deploy: ${{ needs.deploy.result }}"
-        echo "  - MCP Server: ${{ needs.mcp-server-check.result }}"
         exit 1
 
     - name: Test Failure Notification
@@ -446,9 +346,3 @@ jobs:
       run: |
         echo "❌ Tests failed - deployment skipped"
         exit 1
-
-    - name: MCP Server Issues Notification
-      if: ${{ needs.mcp-server-check.result == 'failure' }}
-      run: |
-        echo "⚠️ GitHub MCP Server deployment had issues"
-        echo "Main application deployed successfully, but MCP server needs attention"
