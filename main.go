@@ -7,7 +7,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -540,4 +539,3 @@ func writeJSONError(w http.ResponseWriter, message string, statusCode int) {
 		Message: message,
 	})
 }
-
