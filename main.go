@@ -39,7 +39,7 @@ func main() {
 	http.HandleFunc("/api/submit", handleSubmit)
 	http.HandleFunc("/api/requests", handleRequests)
 	http.HandleFunc("/health", handleHealth)
-	
+
 	// New HTMX-specific endpoints
 	http.HandleFunc("/htmx/submit", handleHTMXSubmit)
 	http.HandleFunc("/htmx/requests", handleHTMXRequests)
@@ -433,7 +433,7 @@ func handleHTMXRequests(w http.ResponseWriter, r *http.Request) {
 				ID: %d | Priority: %s | Created: %s
 			</div>
 			<div>%s</div>
-		</div>`, 
+		</div>`,
 			template.HTMLEscapeString(request.Title),
 			request.ID,
 			template.HTMLEscapeString(request.Priority),
