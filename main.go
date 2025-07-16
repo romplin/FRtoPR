@@ -3,9 +3,11 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"html/template"
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -38,6 +40,11 @@ func main() {
 	http.HandleFunc("/api/submit", handleSubmit)
 	http.HandleFunc("/api/requests", handleRequests)
 	http.HandleFunc("/health", handleHealth)
+	
+	// New HTMX-specific endpoints
+	http.HandleFunc("/htmx/submit", handleHTMXSubmit)
+	http.HandleFunc("/htmx/requests", handleHTMXRequests)
+	http.HandleFunc("/htmx/form", handleHTMXForm)
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -56,8 +63,7 @@ func handleHome(w http.ResponseWriter, r *http.Request) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Feature Request System</title>
-    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
-    <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -173,252 +179,277 @@ func handleHome(w http.ResponseWriter, r *http.Request) {
             color: #007bff;
             border-bottom-color: #007bff;
         }
+        .htmx-request {
+            opacity: 0.5;
+        }
+        .content-section {
+            display: none;
+        }
+        .content-section.active {
+            display: block;
+        }
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+        }
     </style>
 </head>
 <body>
-    <div id="app">
-        <div class="container">
-            <h1>Feature Request System</h1>
+    <div class="container">
+        <h1>Feature Request System</h1>
+        
+        <div class="tabs">
+            <button 
+                class="tab active" 
+                onclick="showTab('form')"
+                id="form-tab"
+            >
+                New Request
+            </button>
+            <button 
+                class="tab" 
+                onclick="showTab('list')"
+                id="list-tab"
+                hx-get="/htmx/requests"
+                hx-target="#requests-content"
+                hx-trigger="click"
+            >
+                All Requests
+            </button>
+        </div>
+
+        <div id="form-content" class="content-section active">
+            <div id="message-container"></div>
             
-            <div class="tabs">
-                <button 
-                    class="tab" 
-                    :class="{ active: activeTab === 'form' }"
-                    @click="activeTab = 'form'"
-                >
-                    New Request
-                </button>
-                <button 
-                    class="tab" 
-                    :class="{ active: activeTab === 'list' }"
-                    @click="setActiveTab('list')"
-                >
-                    All Requests
-                </button>
-            </div>
-
-            <div v-show="activeTab === 'form'">
-                <div v-if="message.text" :class="message.type + '-message'">
-                    {{ message.text }}
+            <form 
+                hx-post="/htmx/submit" 
+                hx-target="#message-container"
+                hx-swap="innerHTML"
+                hx-on::after-request="if(event.detail.successful) { document.getElementById('feature-form').reset(); }"
+                id="feature-form"
+            >
+                <div class="form-group">
+                    <label for="title">Feature Title *</label>
+                    <input 
+                        type="text" 
+                        id="title" 
+                        name="title"
+                        placeholder="Brief descriptive title for the feature"
+                        required
+                    >
                 </div>
-                
-                <form @submit.prevent="submitForm">
-                    <div class="form-group">
-                        <label for="title">Feature Title *</label>
-                        <input 
-                            type="text" 
-                            id="title" 
-                            v-model="form.title"
-                            placeholder="Brief descriptive title for the feature"
-                            required
-                        >
-                    </div>
 
-                    <div class="form-group">
-                        <label for="description">Feature Description *</label>
-                        <textarea 
-                            id="description" 
-                            v-model="form.description"
-                            placeholder="Detailed description of the feature requirements and functionality"
-                            required
-                        ></textarea>
-                    </div>
-
-                    <div class="form-group">
-                        <label for="acceptance_criteria">Acceptance Criteria *</label>
-                        <textarea 
-                            id="acceptance_criteria" 
-                            v-model="form.acceptance_criteria"
-                            placeholder="Clear, testable criteria that define when this feature is complete"
-                            required
-                        ></textarea>
-                    </div>
-
-                    <div class="form-group">
-                        <label for="priority">Priority Level *</label>
-                        <select 
-                            id="priority" 
-                            v-model="form.priority"
-                            required
-                        >
-                            <option value="">Select priority</option>
-                            <option value="high">High - Critical/Urgent</option>
-                            <option value="medium">Medium - Important</option>
-                            <option value="low">Low - Nice to have</option>
-                        </select>
-                    </div>
-
-                    <div class="form-group">
-                        <label for="target_timeline">Target Timeline</label>
-                        <input 
-                            type="text" 
-                            id="target_timeline" 
-                            v-model="form.target_timeline"
-                            placeholder="e.g., Next Sprint, Q2 2025, 2 weeks"
-                        >
-                    </div>
-
-                    <div class="form-group">
-                        <label for="affected_components">Affected Components/Modules</label>
-                        <input 
-                            type="text" 
-                            id="affected_components" 
-                            v-model="form.affected_components"
-                            placeholder="api, frontend, database, auth-service"
-                        >
-                    </div>
-
-                    <div class="form-group">
-                        <label for="example_usage">Example Usage Scenarios</label>
-                        <textarea 
-                            id="example_usage" 
-                            v-model="form.example_usage"
-                            placeholder="Provide specific examples of how users would interact with this feature"
-                        ></textarea>
-                    </div>
-
-                    <div class="form-group">
-                        <label for="technical_constraints">Technical Constraints or Preferences</label>
-                        <textarea 
-                            id="technical_constraints" 
-                            v-model="form.technical_constraints"
-                            placeholder="Any technical limitations, preferred technologies, or implementation constraints"
-                        ></textarea>
-                    </div>
-
-                    <button type="submit" :disabled="isSubmitting">
-                        {{ isSubmitting ? 'Submitting...' : 'Submit Feature Request' }}
-                    </button>
-                    <button type="button" @click="resetForm" class="secondary-btn">Reset Form</button>
-                </form>
-            </div>
-
-            <div v-show="activeTab === 'list'">
-                <div v-if="featureRequests.length === 0" class="feature-item">
-                    <div>No feature requests found.</div>
+                <div class="form-group">
+                    <label for="description">Feature Description *</label>
+                    <textarea 
+                        id="description" 
+                        name="description"
+                        placeholder="Detailed description of the feature requirements and functionality"
+                        required
+                    ></textarea>
                 </div>
-                
-                <div 
-                    v-for="request in featureRequests" 
-                    :key="request.id"
-                    class="feature-item"
-                >
-                    <div class="feature-title">{{ request.title }}</div>
-                    <div class="feature-meta">
-                        ID: {{ request.id }} | 
-                        Priority: {{ request.priority }} | 
-                        Created: {{ formatDate(request.created_at) }}
-                    </div>
-                    <div>{{ request.description }}</div>
+
+                <div class="form-group">
+                    <label for="acceptance_criteria">Acceptance Criteria *</label>
+                    <textarea 
+                        id="acceptance_criteria" 
+                        name="acceptance_criteria"
+                        placeholder="Clear, testable criteria that define when this feature is complete"
+                        required
+                    ></textarea>
                 </div>
+
+                <div class="form-group">
+                    <label for="priority">Priority Level *</label>
+                    <select 
+                        id="priority" 
+                        name="priority"
+                        required
+                    >
+                        <option value="">Select priority</option>
+                        <option value="high">High - Critical/Urgent</option>
+                        <option value="medium">Medium - Important</option>
+                        <option value="low">Low - Nice to have</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="target_timeline">Target Timeline</label>
+                    <input 
+                        type="text" 
+                        id="target_timeline" 
+                        name="target_timeline"
+                        placeholder="e.g., Next Sprint, Q2 2025, 2 weeks"
+                    >
+                </div>
+
+                <div class="form-group">
+                    <label for="affected_components">Affected Components/Modules</label>
+                    <input 
+                        type="text" 
+                        id="affected_components" 
+                        name="affected_components"
+                        placeholder="api, frontend, database, auth-service"
+                    >
+                </div>
+
+                <div class="form-group">
+                    <label for="example_usage">Example Usage Scenarios</label>
+                    <textarea 
+                        id="example_usage" 
+                        name="example_usage"
+                        placeholder="Provide specific examples of how users would interact with this feature"
+                    ></textarea>
+                </div>
+
+                <div class="form-group">
+                    <label for="technical_constraints">Technical Constraints or Preferences</label>
+                    <textarea 
+                        id="technical_constraints" 
+                        name="technical_constraints"
+                        placeholder="Any technical limitations, preferred technologies, or implementation constraints"
+                    ></textarea>
+                </div>
+
+                <button type="submit">Submit Feature Request</button>
+                <button type="button" onclick="document.getElementById('feature-form').reset();" class="secondary-btn">Reset Form</button>
+            </form>
+        </div>
+
+        <div id="list-content" class="content-section">
+            <div id="requests-content">
+                <div class="loading">Click "All Requests" to load feature requests...</div>
             </div>
         </div>
     </div>
 
     <script>
-        const { createApp } = Vue;
+        function showTab(tabName) {
+            // Hide all content sections
+            document.querySelectorAll('.content-section').forEach(section => {
+                section.classList.remove('active');
+            });
+            
+            // Remove active class from all tabs
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            
+            // Show selected content and activate tab
+            document.getElementById(tabName + '-content').classList.add('active');
+            document.getElementById(tabName + '-tab').classList.add('active');
+        }
 
-        createApp({
-            data() {
-                return {
-                    activeTab: 'form',
-                    isSubmitting: false,
-                    message: {
-                        text: '',
-                        type: ''
-                    },
-                    form: {
-                        title: '',
-                        description: '',
-                        acceptance_criteria: '',
-                        priority: '',
-                        target_timeline: '',
-                        affected_components: '',
-                        example_usage: '',
-                        technical_constraints: ''
-                    },
-                    featureRequests: []
+        // Auto-hide success messages after 5 seconds
+        document.body.addEventListener('htmx:afterSwap', function(event) {
+            if (event.detail.target.id === 'message-container') {
+                const messageEl = event.detail.target.querySelector('.success-message');
+                if (messageEl) {
+                    setTimeout(() => {
+                        messageEl.remove();
+                    }, 5000);
                 }
-            },
-            methods: {
-                setActiveTab(tab) {
-                    this.activeTab = tab;
-                    if (tab === 'list') {
-                        this.loadFeatureRequests();
-                    }
-                },
-
-                async submitForm() {
-                    this.isSubmitting = true;
-                    this.message = { text: '', type: '' };
-
-                    try {
-                        const response = await axios.post('/api/submit', this.form);
-                        
-                        if (response.data.success) {
-                            this.message = {
-                                text: 'Feature request submitted successfully! ID: ' + response.data.data.id,
-                                type: 'success'
-                            };
-                            this.resetForm();
-                        } else {
-                            this.message = {
-                                text: response.data.message || 'Error submitting feature request',
-                                type: 'error'
-                            };
-                        }
-                    } catch (error) {
-                        this.message = {
-                            text: 'Error submitting feature request',
-                            type: 'error'
-                        };
-                    } finally {
-                        this.isSubmitting = false;
-                        
-                        setTimeout(() => {
-                            this.message = { text: '', type: '' };
-                        }, 5000);
-                    }
-                },
-
-                resetForm() {
-                    this.form = {
-                        title: '',
-                        description: '',
-                        acceptance_criteria: '',
-                        priority: '',
-                        target_timeline: '',
-                        affected_components: '',
-                        example_usage: '',
-                        technical_constraints: ''
-                    };
-                },
-
-                async loadFeatureRequests() {
-                    try {
-                        const response = await axios.get('/api/requests');
-                        this.featureRequests = response.data.data || [];
-                    } catch (error) {
-                        console.error('Error loading feature requests:', error);
-                    }
-                },
-
-                formatDate(dateString) {
-                    return new Date(dateString).toLocaleDateString() + ' ' + 
-                           new Date(dateString).toLocaleTimeString();
-                }
-            },
-
-            mounted() {
-                this.loadFeatureRequests();
             }
-        }).mount('#app');
+        });
     </script>
 </body>
 </html>`
 	fmt.Fprint(w, html)
 }
 
+func handleHTMXSubmit(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		fmt.Fprint(w, `<div class="error-message">Method not allowed</div>`)
+		return
+	}
+
+	// Parse form data
+	if err := r.ParseForm(); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprint(w, `<div class="error-message">Error parsing form data</div>`)
+		return
+	}
+
+	// Parse affected components
+	var components []string
+	if componentsStr := r.FormValue("affected_components"); componentsStr != "" {
+		for _, comp := range strings.Split(componentsStr, ",") {
+			comp = strings.TrimSpace(comp)
+			if comp != "" {
+				components = append(components, comp)
+			}
+		}
+	}
+
+	featureRequest := FeatureRequest{
+		ID:                   nextID,
+		Title:                r.FormValue("title"),
+		Description:          r.FormValue("description"),
+		AcceptanceCriteria:   r.FormValue("acceptance_criteria"),
+		Priority:             r.FormValue("priority"),
+		TargetTimeline:       r.FormValue("target_timeline"),
+		AffectedComponents:   components,
+		ExampleUsage:         r.FormValue("example_usage"),
+		TechnicalConstraints: r.FormValue("technical_constraints"),
+		CreatedAt:            time.Now(),
+		Status:               "submitted",
+	}
+
+	// Validate required fields
+	if featureRequest.Title == "" || featureRequest.Description == "" ||
+		featureRequest.AcceptanceCriteria == "" || featureRequest.Priority == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprint(w, `<div class="error-message">Please fill in all required fields</div>`)
+		return
+	}
+
+	// Save the feature request
+	featureRequests = append(featureRequests, featureRequest)
+	nextID++
+
+	// Return success message
+	fmt.Fprintf(w, `<div class="success-message">Feature request submitted successfully! ID: %d</div>`, featureRequest.ID)
+}
+
+func handleHTMXRequests(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		fmt.Fprint(w, `<div class="error-message">Method not allowed</div>`)
+		return
+	}
+
+	if len(featureRequests) == 0 {
+		fmt.Fprint(w, `<div class="feature-item"><div>No feature requests found.</div></div>`)
+		return
+	}
+
+	// Generate HTML for all feature requests
+	for _, request := range featureRequests {
+		fmt.Fprintf(w, `
+		<div class="feature-item">
+			<div class="feature-title">%s</div>
+			<div class="feature-meta">
+				ID: %d | Priority: %s | Created: %s
+			</div>
+			<div>%s</div>
+		</div>`, 
+			template.HTMLEscapeString(request.Title),
+			request.ID,
+			template.HTMLEscapeString(request.Priority),
+			request.CreatedAt.Format("2006-01-02 15:04:05"),
+			template.HTMLEscapeString(request.Description))
+	}
+}
+
+func handleHTMXForm(w http.ResponseWriter, r *http.Request) {
+	// This endpoint could be used to return just the form HTML
+	// if you want to reload/reset the form dynamically
+	fmt.Fprint(w, `<div>Form reset successfully!</div>`)
+}
+
+// Keep the original API endpoints for backward compatibility
 func handleSubmit(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSONError(w, "Method not allowed", http.StatusMethodNotAllowed)
