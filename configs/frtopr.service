@@ -1,0 +1,32 @@
+[Unit]
+Description=FRtoPR Feature Request Service
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/frtopr
+ExecStart=/opt/frtopr/FrtoPr
+Restart=always
+RestartSec=10
+
+# Environment variables
+Environment=PORT=8080
+Environment=GITHUB_MCP_SERVER_URL=your_github_mcp_server_url
+Environment=GITHUB_MCP_TOKEN=your_github_mcp_token
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/frtopr
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=frtopr
+
+[Install]
+WantedBy=multi-user.target
